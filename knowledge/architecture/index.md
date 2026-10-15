@@ -18,6 +18,7 @@ and rendered by the [dashboard](dashboard.md).
 - [dispatcher](dispatcher.md)
 - [governor](governor.md)
 - [streaming-pipeline](streaming-pipeline.md)
+- [model-racing](model-racing.md)
 - [metrics-history](metrics-history.md)
 - [dashboard](dashboard.md)
 - [client-auth](client-auth.md)

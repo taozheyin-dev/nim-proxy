@@ -97,7 +97,7 @@ superuser may set the server default through `/api/settings/locale`.
 Authorization owns the server-setting request before locale syntax or
 installed-registry validation.
 
-`openapi.json` records which routes need a session: 14 protected `/api/*`
+`openapi.json` records which routes need a session: 18 protected `/api/*`
 operations inherit the document-level requirement (session cookie **or**
 header credentials), while public `GET /api/locale-bootstrap` and the two
 `/setup` operations carry explicit empty `security` lists. The operator locale

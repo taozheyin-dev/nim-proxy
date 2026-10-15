@@ -68,7 +68,7 @@ With a checkout you can use compose (`docker compose up -d`), build from source 
 
 ## Client recipes
 
-Model IDs pass through verbatim — use any ID from the [NIM catalog](https://build.nvidia.com/models) (or `curl localhost:8000/v1/models`). In **API key required** mode (stored as `keyed`, the default), clients authenticate with a client API key (`npk_…`) minted in the wizard or in Settings. In **Open (no authentication)** mode (stored as `open`), no client key is needed.
+Model IDs pass through verbatim — use any ID from the [NIM catalog](https://build.nvidia.com/models) (or `curl localhost:8000/v1/models`). An administrator can enable [model racing](docs/features/model-racing.md) to race copies of the same chat request; every attempt keeps the requested model and consumes the usual upstream rate budget. In **API key required** mode (stored as `keyed`, the default), clients authenticate with a client API key (`npk_…`) minted in the wizard or in Settings. In **Open (no authentication)** mode (stored as `open`), no client key is needed.
 
 **OpenCode** — `opencode.json`:
 

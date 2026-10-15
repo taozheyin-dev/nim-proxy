@@ -33,6 +33,7 @@ use utoipa::{Modify, OpenApi, ToSchema};
 
 use crate::config::{DashboardCfg, GovernorCfg, Limits, Mode, Role, StoredConfig};
 use crate::history::{HistoryDiagnostics, MetricValue, RollupPoint, Tail};
+use crate::racing_config::RaceStrategy;
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -165,6 +166,31 @@ pub async fn api_method_not_allowed() -> Response {
 pub struct OkResponse {
     /// Always `true`; failures are an [`ApiError`] with a 4xx status.
     pub ok: bool,
+}
+
+/// The opt-in server-wide policy for chat-completion racing.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RacingConfigResponse {
+    pub enabled: bool,
+    pub strategy: Option<RaceStrategy>,
+}
+
+/// Bounded in-memory model observations, cleared on process restart.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PerformanceStatsResponse {
+    pub models: Vec<ModelStatsEntry>,
+}
+
+/// Existing scalar response fields; only actual measurements contribute to
+/// averages. A zero with no samples must not be treated as a fast observation.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ModelStatsEntry {
+    pub avg_tokens_per_sec: f64,
+    pub avg_ttft_ms: f64,
+    pub name: String,
+    pub success_rate: f64,
+    pub successful_requests: u64,
+    pub total_requests: u64,
 }
 
 impl OkResponse {
@@ -515,6 +541,10 @@ impl Modify for SecurityAddon {
         crate::settings::validate_key,
         crate::settings::setup_submit,
         crate::settings::setup_validate_key,
+        crate::racing_api::get_racing_config,
+        crate::racing_api::update_racing_config,
+        crate::racing_api::get_performance_stats,
+        crate::racing_api::get_ranked_models,
     ),
     components(schemas(
         ApiError,
@@ -532,11 +562,15 @@ impl Modify for SecurityAddon {
         Limits,
         LocaleBootstrap,
         MetricValue,
+        ModelStatsEntry,
         MintedClientKey,
         Mode,
         NimKeyRow,
         OkResponse,
         PoolSummary,
+        PerformanceStatsResponse,
+        RaceStrategy,
+        RacingConfigResponse,
         Role,
         RollupPoint,
         ServerSettings,
@@ -555,6 +589,7 @@ impl Modify for SecurityAddon {
     modifiers(&SecurityAddon),
     tags(
         (name = "dashboard", description = "Read-only telemetry the operator console renders."),
+        (name = "racing", description = "Admin-only opt-in racing policy and in-memory model performance."),
         (name = "settings", description = "The config store's only writers. Every write is \
             validate -> persist -> swap; a failed disk write applies nothing."),
         (name = "setup", description = "First-run claim. **Unauthenticated** — these routes sit \
@@ -2340,6 +2375,28 @@ mod tests {
         );
         sorted("ApiErrorBody", &ApiError::new("code", "message").error);
         sorted("OkResponse", &OkResponse::new());
+        sorted(
+            "RacingConfigResponse",
+            &RacingConfigResponse {
+                enabled: false,
+                strategy: None,
+            },
+        );
+        sorted(
+            "PerformanceStatsResponse",
+            &PerformanceStatsResponse { models: Vec::new() },
+        );
+        sorted(
+            "ModelStatsEntry",
+            &ModelStatsEntry {
+                avg_tokens_per_sec: 1.0,
+                avg_ttft_ms: 1.0,
+                name: "model".into(),
+                success_rate: 1.0,
+                successful_requests: 1,
+                total_requests: 1,
+            },
+        );
         sorted(
             "LocaleBootstrap",
             &LocaleBootstrap::from_config(&crate::config::StoredConfig::default(), ["en-US"]),

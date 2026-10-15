@@ -71,6 +71,8 @@ Logs are one access line per request plus startup detail; ANSI is disabled
 automatically when stdout isn't a TTY. There is no shell to exec into — use
 logs, `/metrics`, and the dashboard.
 
-Upgrades: `docker compose pull && docker compose up -d` — history persists in
-the volume; rate windows reset (a brief post-restart 429 burst is absorbed
-silently).
+For upgrades, pull the image, stop callers and drain the proxy, then wait at
+least 61 seconds after shutdown before starting the replacement. History
+persists in the volume; rate windows do not. Retrying a post-restart 429 cannot
+substitute for this ownership/window handoff. Multiple instances must have
+disjoint active key sets; see [new-api integration](new-api-integration.md).

@@ -25,6 +25,17 @@ Use the proof that exercises the changed surface, and preserve the limits of
 that proof.
 
 - **Rust logic:** `cargo test` and `cargo clippy --all-targets -- -D warnings`.
+- **Model racing:** `cargo test --test racing` exercises same-model request-byte
+  preservation, immediate/delayed selection, complete buffered tool validation,
+  cancellation, deadlines, stream framing and shared admission against local
+  mock upstreams. `cargo test --test racing_config` proves pre-setup/session/admin
+  gates, authorization before body parsing, typed rejections, bounded policy
+  validation, durable restart, failed-save rollback, startup refusal, and
+  strict-passthrough exclusion through both general limits writers. Run the
+  route inventory, generated OpenAPI and field-order guards below with these
+  tests. The OpenAPI suite also rejects schemas that allow extra/mixed fields
+  for the closed named racing policies. Mock timing proves ordering and
+  ownership, not a production speedup.
 - **Canonical history-v1 codec:** `cargo test history::codec::tests --lib`
   exercises sanitized golden boot/sample/checkpoint bytes, canonical encode
   ordering, reordered-object decoding, and every declared negative diagnostic:
@@ -212,6 +223,15 @@ that proof.
   internal vertical scrollers, and clean runtime observations. This is
   mechanical evidence for review, never a claim of human visual approval.
 - **Before push:** `cargo fmt --check`.
+- **Operational new-api integration:** follow the
+  [runbook](../ops/new-api-integration.md). Validate a consistent backup, exercise
+  the replacement transaction with rollback, and require a named stale-channel
+  failure control. Verify key-set exclusion, stopped-service window transfer,
+  health/auth and actual ordinary/test group routing with bounded real requests.
+  A perpetual-heartbeat timeout and finite-length SSE control validate the
+  client observer. Re-read successful channel/group logs and prove temporary
+  token revocation. These checks establish deployment behavior, not speedup;
+  no Rust or browser behavior change is implied by an operational-only edit.
 
 CI runs the automated checks configured in [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml);
 it does not perform human layout review or the strict load scenario. `cargo test`
@@ -273,10 +293,10 @@ Two tests exist purely so the JSON contract cannot move by accident (see
   from the committed file. Regenerate with
   `UPDATE_OPENAPI=1 cargo test --test openapi`; CI's `check` job runs that and
   then `git diff --exit-code -- openapi.json`. `spec_is_usable` additionally
-  asserts the document is consumable — 17 operations, each tagged with a
-  documented 200, the 14 protected `/api/*` operations inheriting the auth
+  asserts the document is consumable — 21 operations, each tagged with a
+  documented 200, the 18 protected `/api/*` operations inheriting the auth
   requirement, and public bootstrap plus `/setup` explicitly waiving it.
-- `routes::tests::inventory_agrees_with_generated_openapi` owns the 36-row
+- `routes::tests::inventory_agrees_with_generated_openapi` owns the 40-row
   compiled method/path inventory, including explicit OpenAPI omissions, the
   `/v1/{*path}` template versus concrete probe, all ten presentation assets,
   and zero superuser-exclusive routes. `route_contract_behavior_matrix` sends the

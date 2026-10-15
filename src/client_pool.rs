@@ -17,22 +17,13 @@ pub fn build_optimized_client() -> Result<Client, reqwest::Error> {
         // Connection pooling - reuse connections
         .pool_max_idle_per_host(10)
         .pool_idle_timeout(Duration::from_secs(90))
-
         // TCP optimizations
         .tcp_keepalive(Duration::from_secs(60))
         .tcp_nodelay(true)
-
-        // Timeouts
+        // Bound connection setup; request workflows own generation deadlines.
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(300))
-
-        // HTTP/2 for better multiplexing
-        .http2_prior_knowledge()
-
-        // Enable compression
+        // Negotiate HTTP normally and use the compression feature already enabled.
         .gzip(true)
-        .brotli(true)
-
         .build()
 }
 
@@ -77,5 +68,43 @@ mod tests {
 
         // Should return the same underlying client (Arc clones point to same data)
         assert!(Arc::ptr_eq(&client1, &client2));
+    }
+
+    #[tokio::test]
+    async fn client_accepts_http1_upstream() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = BufReader::new((&mut socket).take(8192));
+            let mut line = String::new();
+            request.read_line(&mut line).await.unwrap();
+            assert_eq!(line, "GET / HTTP/1.1\r\n");
+            loop {
+                line.clear();
+                assert_ne!(request.read_line(&mut line).await.unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            drop(request);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+        });
+
+        let response = build_optimized_client()
+            .unwrap()
+            .get(format!("http://{address}/"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.version(), reqwest::Version::HTTP_11);
+        assert_eq!(response.text().await.unwrap(), "ok");
+        upstream.await.unwrap();
     }
 }

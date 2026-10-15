@@ -41,6 +41,8 @@ pub struct StoredConfig {
     pub dashboard: DashboardCfg,
     #[serde(default)]
     pub governor: GovernorCfg,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub racing: Option<crate::racing_config::RaceStrategy>,
     #[serde(default)]
     pub users: Vec<User>,
 }
@@ -295,6 +297,7 @@ impl StoredConfig {
             stream_idle: Duration::from_secs(self.limits.stream_idle_secs),
             request_timeout: Duration::from_secs(self.limits.request_timeout_secs),
             strict_passthrough: self.limits.strict_passthrough,
+            racing: self.racing.clone(),
             clients: match self.client_auth.mode {
                 Mode::Open => None,
                 Mode::Keyed => Some(
@@ -421,6 +424,12 @@ pub fn validate(sc: &StoredConfig) -> Result<(), String> {
         return Err(format!("version must be 1, got {}", sc.version));
     }
     validate_stored_locale("default_locale", &sc.default_locale)?;
+    if let Some(strategy) = &sc.racing {
+        strategy.validate()?;
+        if sc.limits.strict_passthrough {
+            return Err("racing cannot be enabled with strict_passthrough".into());
+        }
+    }
     let l = &sc.limits;
     if l.heartbeat_secs == 0 {
         return Err("heartbeat_secs must be >= 1".into());

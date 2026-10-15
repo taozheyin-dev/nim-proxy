@@ -65,5 +65,6 @@ off (`governor.enabled`). Both live in the
 The dashboard's Reliability tab shows a **Model pressure** card built from these
 — rendered only once the governor has engaged, so unaffected deployments see
 zero noise. Test scaffolding: `mock_nim.py --worker-slots N` emits the real
-error string at a per-model in-flight cap; `loadtest.py` asserts the governor
-converges (bounded exhaustion, no thrash, no client-visible failures).
+error string at a per-model in-flight cap; `loadtest.py` reports exhaustion
+counts and peak concurrency while asserting no client failures or RPM
+violations. Those checks alone do not establish bounded adaptive convergence.

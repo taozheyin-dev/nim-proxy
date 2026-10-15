@@ -24,6 +24,13 @@ A single tokio task owns slot allocation
 4. If the reply channel is dead (client hung up between queueing and grant),
    the slot goes back via `Pool::release`.
 
+`acquire_racing` joins this same FIFO with a request-local set of granted key
+identities. Selection prefers unused ready keys and registers each successfully
+delivered grant before processing the next waiter. A failed delivery refunds
+the reservation without adding the key. See the
+[same-model policy](../decisions/same-model-request-racing.md) for affinity,
+reuse and cancellation rules.
+
 Callers wait on the oneshot with a `select!` against a heartbeat tick, so
 streaming requests emit keepalives the whole time they're queued
 ([sse-heartbeats](../decisions/sse-heartbeats-for-rate-waits.md)).

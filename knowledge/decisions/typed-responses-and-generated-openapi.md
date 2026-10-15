@@ -62,10 +62,14 @@ for a `user`, so the type says what the security posture already required.
 
 **Generated spec.** `utoipa` (pinned `=5.5.0`, project convention) renders
 `openapi.json` at the repo root from `#[utoipa::path]` on the handlers and
-`ToSchema` on the types. 17 operations: **15** `/api/*` routes, plus
+`ToSchema` on the types. 21 operations: **19** `/api/*` operations, plus
 `POST /setup` and `POST /setup/validate-key`. `GET /api/locale-bootstrap`
 returns the typed, field-ordered installed-locale registry and is explicitly
-public; the other 14 `/api/*` operations inherit operator authentication.
+public; the other 18 `/api/*` operations inherit operator authentication.
+Four racing operations additionally require admin or superuser authority.
+Their policy and performance responses live in `api.rs`, while the shared
+`RaceStrategy` schema describes the persisted policy variants. Policy writes
+return `OkResponse` on successful durable publication and `ApiError` on rejection.
 The account request is the one schema-only exception to derive generation:
 utoipa 5.5 collapses its untagged password-or-locale mixed enum to the first
 variant, so a small `PartialSchema` builder records those two native JSON
@@ -140,8 +144,8 @@ differ.
 CI's `check` job additionally runs `UPDATE_OPENAPI=1 cargo test --test openapi`
 followed by `git diff --exit-code -- openapi.json`, so a stale spec fails the
 build rather than merely being discouraged. `spec_is_usable` asserts the
-document is consumable at all: 17 operations, every one tagged with a
-documented 200, the 14 protected `/api/*` operations inheriting the auth
+document is consumable at all: 21 operations, every one tagged with a
+documented 200, the 18 protected `/api/*` operations inheriting the auth
 requirement, and bootstrap plus every `/setup` operation explicitly waiving
 it.
 

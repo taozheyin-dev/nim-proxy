@@ -7,6 +7,7 @@ description: Deploying, configuring, sharing, and capacity planning.
 # Operations
 
 - [deploy-docker](deploy-docker.md)
+- [new-api-integration](new-api-integration.md)
 - [release](release.md)
 - [configure-env](configure-env.md)
 - [sharing-with-friends](sharing-with-friends.md)

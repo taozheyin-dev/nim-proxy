@@ -15,7 +15,7 @@ module are test-only descriptive metadata and cannot dispatch a request.
 `probe_path` is a concrete fixture-backed request path. This distinction is
 load-bearing for `/v1/{*path}` and future parameterized routes.
 
-The current router has 35 method/path contracts, including nine presentation
+The current router has 40 method/path contracts, including ten presentation
 asset routes. A
 superuser has no exclusive route: it has admin endpoint power plus the
 undeletable/undemotable account invariant. `OperatorSuperuser` exists so a
@@ -62,6 +62,10 @@ not a second copy here.
 | `GET /api/dashboard` | Browser operator | Private | Post-setup | Session/header credentials; any role | Query | JSON | `setup_required`, `unauthorized`, `invalid_query`, `invalid_time_window` | Config unchanged; no upstream call | Dashboard range load | Yes | B, M |
 | `GET /api/dashboard/now` | Browser operator | Private | Post-setup | Session/header credentials; any role | None | JSON | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Dashboard polling | Yes | B, M |
 | `GET /api/config` | Browser operator | Private | Post-setup | Session/header credentials; any role; response filtered by role/ownership | None | JSON including current-user `locale`; admin server includes `default_locale` | `setup_required`, `unauthorized` | Config unchanged; no upstream call | Operator startup and Settings | Yes | B, M |
+| `GET /api/racing/config` | Operator API | Private | Post-setup | Session/header credentials; admin or superuser | None | `RacingConfigResponse` JSON | `setup_required`, `unauthorized`, `forbidden` | Config unchanged; no upstream call | None | Yes | M, `racing_control_plane_requires_admin` |
+| `POST /api/racing/config` | Operator API | Private | Post-setup | Session/header credentials; admin or superuser; role check precedes body parsing | `UpdateRacingConfigRequest` JSON | `OkResponse` JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Atomically validates, persists and publishes the policy; rejection changes neither runtime nor durable bytes; no upstream call | None | Yes | M, `tests/racing_config.rs` |
+| `GET /api/racing/stats` | Operator API | Private | Post-setup | Session/header credentials; admin or superuser | None | `PerformanceStatsResponse` JSON in model-id order | `setup_required`, `unauthorized`, `forbidden` | Config unchanged; no upstream call | None | Yes | M, `racing_control_plane_requires_admin` |
+| `GET /api/racing/ranked` | Operator API | Private | Post-setup | Session/header credentials; admin or superuser | None | `PerformanceStatsResponse` JSON ranked from measured observations | `setup_required`, `unauthorized`, `forbidden` | Config unchanged; no upstream call | None | Yes | M, `racing_control_plane_requires_admin` |
 | `GET /api/locale-bootstrap` | Browser | Public | Always | None | None | Installed locale registry plus persisted server default | None | None | Dashboard/setup/login startup | Yes, explicit no security | B, M |
 | `POST /api/settings/nim-keys` | Browser/operator API | Private | Post-setup | Session/header credentials; own keys for user, any key for admin | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Access & keys | Yes | B, O, M |
 | `POST /api/settings/clients` | Browser/operator API | Private | Post-setup | Session/header credentials; own keys for user, any key/mode for admin | JSON | JSON | `setup_required`, `unauthorized`, `forbidden`, `invalid_config` | Success changes config bytes; rejection does not | Settings Access & keys | Yes | B, O, M |
@@ -76,6 +80,7 @@ not a second copy here.
 | `POST /api/settings/validate-key` | Browser/operator API | Private | Post-setup | Session/header credentials; any role | JSON | JSON | `setup_required`, `unauthorized` | Success makes one upstream call; config unchanged | Settings key validation | Yes | B, M |
 | `GET /health` | Orchestrator | Public | Always | None | None | Plain text | None | None | Container healthcheck | No | B, M |
 | `GET /assets/public/public.css` | Browser | Public | Always | None | None | CSS | None | None | Setup/login pages | No | B, M |
+| `GET /assets/public/noscript.css` | Browser | Public | Always | None | None | CSS | None | None | Setup/login pages without JavaScript | No | B, M |
 | `GET /assets/public/setup.js` | Browser | Public | Always | None | None | JavaScript | None | None | Setup page | No | B, M |
 | `GET /assets/public/login.js` | Browser | Public | Always | None | None | JavaScript | None | None | Login page | No | B, M |
 | `GET /assets/public/locales/{locale}.json` | Browser | Public | Always | None | None | JSON catalog limited to `setup.*`, `login.*`, and `common.app_name` | Unknown locale 404 | None | Setup/login startup | No | B, M |
@@ -85,7 +90,7 @@ not a second copy here.
 | `GET /setup` | First operator | Public | Pre-setup | None | None | HTML | Post-setup bare 404 | None | Setup wizard | No | B, M |
 | `POST /setup` | First operator | Public | Pre-setup | None; shared pre-auth throttle; first complete claim wins | JSON or form URL encoded | JSON + session cookie, or native redirect + session cookie | `weak_password`, `invalid_config`, `setup_complete`, `throttled` | Success creates config bytes and sets a session cookie; throttled requests stop before PBKDF2 and leave config unchanged | Setup wizard finish | Yes, explicit no security | B, M |
 | `POST /setup/validate-key` | First operator | Public | Pre-setup | None; pre-auth throttle | JSON | JSON | `invalid_base_url`, `throttled`, `setup_complete` | Success makes one upstream call; config unchanged | Setup wizard key step | Yes, explicit no security | B, M |
-| `ANY /v1/{*path}` (`POST /v1/chat/completions` probe) | OpenAI-compatible client | Client boundary: keyed private or explicitly open trusted-network mode | Post-setup | Client bearer in keyed mode; none in open mode | Upstream-owned bytes | Upstream content type or locally framed SSE | `setup_required`, `unauthorized`, `invalid_deadline`, `overloaded`, transport codes | Success makes one upstream call; config unchanged | External agent harness | No: upstream owns schema | B, C, M |
+| `ANY /v1/{*path}` (`POST /v1/chat/completions` probe) | OpenAI-compatible client | Client boundary: keyed private or explicitly open trusted-network mode | Post-setup | Client bearer in keyed mode; none in open mode | Upstream-owned bytes | Upstream content type or locally framed SSE | `setup_required`, `unauthorized`, `invalid_deadline`, `overloaded`, transport codes; `race_failed` for enabled chat races | Upstream calls; enabled racing sends the configured number of copies preserving the client's model; config unchanged | External agent harness | No: upstream owns schema | B, C, M, `tests/racing.rs` |
 
 ## Boundary ownership
 
@@ -108,9 +113,17 @@ authenticated role receives the same established pool payload from `/metrics`,
 and admin-only sections before serialization. The focused multi-user E2E proof
 is `shared_observability_is_identical_across_roles_while_config_stays_scoped`.
 
-Generated OpenAPI describes 15 `/api` operations and two setup POST
+Racing policies are optional durable settings, disabled when absent. Their
+shared validator rejects a policy combined with `strict_passthrough`, including
+when either general limits writer is used and at startup. Enabling a legacy
+multi-model policy is rejected, and a store containing one refuses startup
+without rewriting bytes. See
+[model racing](model-racing.md) for selection, cancellation and observation
+boundaries; the four racing operations have no Dashboard caller.
+
+Generated OpenAPI describes 19 `/api` operations and two setup POST
 operations. The locale bootstrap is public with explicit `security: []`; the
-other 14 `/api` operations inherit operator authentication. HTML/form,
+other 18 `/api` operations inherit operator authentication. HTML/form,
 presentation assets, health, metrics, and `/v1`
 omissions are explicit
 decisions. The generated-file authority and error schema remain in

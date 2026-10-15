@@ -69,8 +69,8 @@ fn spec_is_usable() {
         .map(|item| item.as_object().expect("path item").len())
         .sum();
     assert_eq!(
-        operation_count, 17,
-        "15 /api/* operations + the 2 setup operations"
+        operation_count, 21,
+        "19 /api/* operations + the 2 setup operations"
     );
     assert_eq!(
         paths["/api/locale-bootstrap"]["get"]["security"]
@@ -171,6 +171,62 @@ fn spec_is_usable() {
 }
 
 #[test]
+fn racing_operations_have_typed_admin_contracts() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&nim_proxy::openapi_json()).expect("the spec is JSON");
+    for (path, method, response_type) in [
+        ("/api/racing/config", "get", "RacingConfigResponse"),
+        ("/api/racing/config", "post", "OkResponse"),
+        ("/api/racing/stats", "get", "PerformanceStatsResponse"),
+        ("/api/racing/ranked", "get", "PerformanceStatsResponse"),
+    ] {
+        let operation = &spec["paths"][path][method];
+        assert!(
+            operation.is_object(),
+            "racing-openapi: missing {method} {path}"
+        );
+        assert!(
+            operation.get("security").is_none(),
+            "racing-openapi: inherit operator authentication"
+        );
+        assert_eq!(
+            operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            format!("#/components/schemas/{response_type}")
+        );
+        for status in ["401", "403", "503"] {
+            assert_eq!(
+                operation["responses"][status]["content"]["application/json"]["schema"]["$ref"],
+                "#/components/schemas/ApiError",
+                "racing-openapi: {method} {path} {status}"
+            );
+        }
+    }
+    let write = &spec["paths"]["/api/racing/config"]["post"];
+    assert_eq!(
+        write["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/UpdateRacingConfigRequest"
+    );
+    for status in ["400", "413", "415", "422"] {
+        assert_eq!(
+            write["responses"][status]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ApiError"
+        );
+    }
+    assert_eq!(
+        spec["components"]["schemas"]["ModelStatsEntry"]["required"],
+        serde_json::json!([
+            "avg_tokens_per_sec",
+            "avg_ttft_ms",
+            "name",
+            "success_rate",
+            "successful_requests",
+            "total_requests"
+        ])
+    );
+    assert!(spec["components"]["schemas"]["RaceStrategy"].is_object());
+}
+
+#[test]
 fn locale_bootstrap_schema_is_typed() {
     let spec: serde_json::Value =
         serde_json::from_str(&nim_proxy::openapi_json()).expect("the spec is JSON");
@@ -192,6 +248,33 @@ fn locale_bootstrap_schema_is_typed() {
         "string"
     );
     assert_eq!(schema["properties"]["server_default"]["type"], "string");
+}
+
+#[test]
+fn racing_policy_schema_rejects_extra_or_mixed_fields() {
+    let spec: serde_json::Value =
+        serde_json::from_str(&nim_proxy::openapi_json()).expect("the spec is JSON");
+    let variants = schema_variants(&spec, &spec["components"]["schemas"]["RaceStrategy"]);
+    for (kind, fields) in [
+        ("same_model", 3),
+        ("full_parallel", 2),
+        ("smart", 4),
+        ("ttft_racing", 2),
+    ] {
+        let variant = variants
+            .iter()
+            .find(|v| v["properties"]["type"]["enum"] == serde_json::json!([kind]))
+            .expect("named racing policy variant");
+        assert_eq!(variant["required"].as_array().unwrap().len(), fields);
+        assert_eq!(variant["properties"].as_object().unwrap().len(), fields);
+        // All allowed fields are required: this cap permits the complete
+        // policy while rejecting any additional or legacy/new mixed field.
+        assert_eq!(
+            variant["maxProperties"],
+            serde_json::json!(fields),
+            "racing-openapi: {kind} must reject extra fields like its typed API"
+        );
+    }
 }
 
 #[test]

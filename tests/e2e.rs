@@ -304,6 +304,7 @@ fn contract_body(
             serde_json::json!({"base_url": format!("{}/matrix-{suffix}", mock.url)})
         }
         "api-settings-locale" => serde_json::json!({"locale": "en-US"}),
+        "api-racing-config-post" => serde_json::json!({"enabled": false}),
         "api-settings-account" => serde_json::json!({
             "current_password": TEST_PASSWORD,
             "new_password": format!("matrix-new-password-{suffix}")
@@ -905,6 +906,58 @@ async fn route_contract_behavior_matrix() {
             success_status: 200,
             path: "/api/settings/locale",
         },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "GET",
+            name: "api-racing-config-get",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/racing/config",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "POST",
+            name: "api-racing-config-post",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::Json,
+            side_effect: ContractSideEffect::DurableConfigIdempotent,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/racing/config",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "GET",
+            name: "api-racing-stats",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/racing/stats",
+        },
+        RouteBehavior {
+            access: ContractAccess::OperatorAdmin,
+            accept_html: false,
+            expectations: configured_contract_expectations(200, 403),
+            method: "GET",
+            name: "api-racing-ranked",
+            phase: ContractPhase::PostSetup,
+            request: ContractRequest::None,
+            side_effect: ContractSideEffect::None,
+            success_content_type: Some("application/json"),
+            success_status: 200,
+            path: "/api/racing/ranked",
+        },
         // Password rotation invalidates every prior cookie for that actor, so
         // keep this after all other authenticated probes.
         RouteBehavior {
@@ -943,7 +996,7 @@ async fn route_contract_behavior_matrix() {
         },
     ];
 
-    assert_eq!(rows.len(), 36, "route-contract:inventory");
+    assert_eq!(rows.len(), 40, "route-contract:inventory");
 
     let mock = start_mock().await;
     let before_setup = start_proxy_fresh().await;

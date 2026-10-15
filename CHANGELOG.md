@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in model racing for `POST /v1/chat/completions`: same-model request
+  copies, optional delayed hedges, and first-meaningful-delta streaming. Each
+  candidate uses the existing RPM dispatcher and model governor. Losers are
+  cancelled; sent RPM remains consumed. Streaming disconnects and caller
+  deadlines cancel all owned work.
+- Admin-only racing configuration and statistics APIs with generated OpenAPI.
+  The validated policy persists as an optional config-v1 field, is disabled by
+  default, and cannot be enabled with strict passthrough. Every attempt preserves
+  the client's requested model and payload, except normal usage injection.
+
+### Changed
+
+- The unreleased multi-model policies `full_parallel`, `smart` and `ttft_racing`
+  are retired. Replace them with `{"type":"same_model","attempts":2,
+  "hedge_delay_ms":0}` or remove `racing` to disable. Legacy stores refuse startup
+  without rewriting bytes; attempts to enable legacy policies return a validation
+  error. This is an intentional opt-in policy break, with no automatic migration.
+  Metric names remain stable; new races use strategy label `same_model` and
+  cancellation reason `winner_found`. Historical strategy labels and smart
+  counters receive no new samples; history is not relabelled.
+- Buffered racing requires effective terminal completion JSON. Delayed copies
+  keep the original eligible, and additional copies prefer unused ready keys
+  while retaining FIFO, shared model admission and every sent request's RPM cost.
+
 ### Fixed
+
+- Racing compilation, completion-order selection, task cancellation and
+  performance sample accounting. Missing TTFT is excluded from rankings;
+  buffered completion latency is never reported as time to first token.
 
 - Installed locale definitions now jointly drive locale bootstrap, public and
   operator catalog bytes, and route acceptance. Catalog URLs accept valid

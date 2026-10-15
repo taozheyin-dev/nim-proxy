@@ -146,10 +146,17 @@ async fn reserve_slot(
     heartbeat: Duration,
     deadline: Instant,
     prefer: Option<usize>,
+    on_wait: impl FnMut() -> bool,
+) -> Option<Slot> {
+    await_slot(state.dispatch.acquire(deadline, prefer), heartbeat, on_wait).await
+}
+
+async fn await_slot(
+    mut rx: tokio::sync::oneshot::Receiver<Slot>,
+    heartbeat: Duration,
     mut on_wait: impl FnMut() -> bool,
 ) -> Option<Slot> {
     let queued = Instant::now();
-    let mut rx = state.dispatch.acquire(deadline, prefer);
     loop {
         tokio::select! {
             slot = &mut rx => {
@@ -553,6 +560,39 @@ pub async fn handle(
         record_shape(&ctx, parsed.as_ref(), wants_stream);
     }
 
+    if method == Method::POST && uri.path() == "/v1/chat/completions" {
+        if let Some(strategy) = cfg.racing.clone() {
+            let Some(request) = parsed.filter(serde_json::Value::is_object) else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(proxy_error_json(
+                        "invalid_request",
+                        "racing requires a JSON object",
+                    )),
+                )
+                    .into_response();
+            };
+            let race = RaceRequest {
+                state,
+                deadline: wait_deadline(&cfg),
+                cfg,
+                ctx,
+                path_query,
+                headers,
+                request,
+                original: body,
+                prefer,
+                used_keys: Arc::new(Mutex::new(std::collections::HashSet::new())),
+                wants_stream,
+            };
+            return if wants_stream {
+                race.streaming(strategy, inflight_guard, request_deadline)
+            } else {
+                race.buffered(strategy, request_deadline).await
+            };
+        }
+    }
+
     // Usage injection: streamed responses only report exact token usage when
     // asked via stream_options, so ask on the client's behalf. `fallback`
     // keeps the untouched body for a one-shot retry if the model rejects it.
@@ -617,6 +657,405 @@ pub async fn handle(
         } else {
             work.await
         }
+    }
+}
+
+type UpstreamChunks =
+    std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + Send>>;
+
+/// Own every contender inside one request future. Dropping selection cancels
+/// pending HTTP work and releases model permits; sent RPM is never refunded.
+struct RaceRequest {
+    state: Arc<AppState>,
+    cfg: Arc<Config>,
+    ctx: Ctx,
+    path_query: String,
+    headers: HeaderMap,
+    request: serde_json::Value,
+    original: Bytes,
+    prefer: Option<usize>,
+    used_keys: Arc<Mutex<std::collections::HashSet<String>>>,
+    wants_stream: bool,
+    deadline: Instant,
+}
+
+struct RaceReply {
+    ctx: Ctx,
+    sent_at: Instant,
+    _permit: Option<ModelPermit>,
+    status: StatusCode,
+    content_type: String,
+    body: RaceBody,
+}
+
+enum RaceBody {
+    Buffered(Bytes),
+    Stream {
+        prefix: Bytes,
+        chunks: UpstreamChunks,
+        first: Instant,
+        gate: crate::racing::SseGate,
+    },
+}
+
+impl RaceRequest {
+    async fn attempt(&self, ordinal: usize) -> Result<RaceReply, ()> {
+        let result = self.attempt_inner(ordinal, &self.ctx).await;
+        if result.is_err() {
+            self.observe(self.ctx.model.clone(), false, None, None);
+        }
+        result
+    }
+
+    fn observe(&self, model: String, success: bool, ttft: Option<Duration>, tps: Option<f64>) {
+        self.state
+            .perf_tracker
+            .record(crate::performance::PerformanceObservation {
+                model,
+                success,
+                ttft,
+                tokens_per_sec: tps,
+                error: None,
+            });
+    }
+
+    async fn attempt_inner(&self, ordinal: usize, ctx: &Ctx) -> Result<RaceReply, ()> {
+        let prefer = if ordinal == 0 { self.prefer } else { None };
+        let mut injected = self.wants_stream
+            && self.request.get("stream_options").is_none()
+            && !self.state.no_inject.lock().unwrap().contains(&ctx.model);
+        let mut body = if injected {
+            let mut request = self.request.clone();
+            request["stream_options"] = serde_json::json!({"include_usage": true});
+            Bytes::from(serde_json::to_vec(&request).map_err(|_| ())?)
+        } else {
+            self.original.clone()
+        };
+        loop {
+            if Instant::now() >= self.deadline {
+                return Err(());
+            }
+            let permit =
+                acquire_model_permit(&self.state, &self.cfg, ctx, self.deadline, || true).await?;
+            let slot = await_slot(
+                self.state
+                    .dispatch
+                    .acquire_racing(self.deadline, prefer, self.used_keys.clone()),
+                self.cfg.heartbeat,
+                || true,
+            )
+            .await
+            .ok_or(())?;
+            let sent_at = Instant::now();
+            let mut request = upstream_request(
+                &self.state.http,
+                &self.cfg.base_url,
+                &Method::POST,
+                &self.path_query,
+                &self.headers,
+                &slot.key,
+                &body,
+            );
+            if !self.wants_stream {
+                request = request.timeout(self.cfg.request_timeout);
+            }
+            // Admission/retries share the original max_wait. Generation owns
+            // request_timeout/stream_idle and the caller's absolute deadline.
+            let resp = match tokio::time::timeout_at(self.deadline.into(), request.send()).await {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(_)) => {
+                    enter_cooldown(&slot, "connect", Duration::from_secs(5));
+                    continue;
+                }
+                Err(_) => return Err(()),
+            };
+            if resp.status() == reqwest::StatusCode::BAD_REQUEST && injected {
+                self.state
+                    .no_inject
+                    .lock()
+                    .unwrap()
+                    .insert(ctx.model.clone());
+                body = self.original.clone();
+                injected = false;
+                continue;
+            }
+            if retryable(resp.status()) {
+                let status = resp.status();
+                let backoff = backoff_for(&resp);
+                let detail = tokio::time::timeout_at(self.deadline.into(), resp.text())
+                    .await
+                    .map_err(|_| ())?
+                    .map_err(|_| ())?;
+                if governor::is_worker_exhausted(&detail) {
+                    self.state.governor.note_exhausted(
+                        &ctx.model,
+                        self.cfg.governor.overrides.get(&ctx.model).copied(),
+                    );
+                } else {
+                    enter_cooldown(&slot, status.as_str(), backoff);
+                }
+                continue;
+            }
+            if !resp.status().is_success() {
+                return Err(());
+            }
+            let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/json")
+                .to_owned();
+            let body = if self.wants_stream {
+                let mut chunks: UpstreamChunks = Box::pin(resp.bytes_stream());
+                let mut prefix = bytes::BytesMut::new();
+                let mut gate = crate::racing::SseGate::default();
+                loop {
+                    let chunk = read_race_chunk(&mut chunks, self.cfg.stream_idle)
+                        .await?
+                        .ok_or(())?
+                        .map_err(|_| ())?;
+                    gate.push(&chunk);
+                    prefix.extend_from_slice(&chunk);
+                    if gate.ready {
+                        break RaceBody::Stream {
+                            prefix: prefix.freeze(),
+                            chunks,
+                            first: Instant::now(),
+                            gate,
+                        };
+                    }
+                    if gate.failed || gate.done {
+                        return Err(());
+                    }
+                }
+            } else {
+                let bytes = resp.bytes().await.map_err(|_| ())?;
+                if !crate::racing::effective_completion(&bytes) {
+                    return Err(());
+                }
+                RaceBody::Buffered(bytes)
+            };
+            return Ok(RaceReply {
+                ctx: ctx.clone(),
+                sent_at,
+                _permit: permit,
+                status,
+                content_type,
+                body,
+            });
+        }
+    }
+
+    async fn select(&self, strategy: crate::racing::RaceStrategy) -> Result<RaceReply, ()> {
+        crate::racing::select(strategy, |ordinal| self.attempt(ordinal)).await
+    }
+
+    async fn buffered(
+        self,
+        strategy: crate::racing::RaceStrategy,
+        deadline: Option<RequestDeadline>,
+    ) -> Response {
+        gauge!("nimproxy_active_requests").increment(1.0);
+        let _active =
+            crate::dispatch::scopeguard(|| gauge!("nimproxy_active_requests").decrement(1.0));
+        let work = async {
+            let Ok(reply) = self.select(strategy).await else {
+                record_request(&self.ctx, "502");
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    axum::Json(proxy_error_json(
+                        "race_failed",
+                        "all racing attempts failed",
+                    )),
+                )
+                    .into_response();
+            };
+            let RaceBody::Buffered(body) = reply.body else {
+                unreachable!("buffered race")
+            };
+            counter!("nimproxy_race_model_wins_total", "model" => reply.ctx.model.clone())
+                .increment(1);
+            histogram!("nimproxy_upstream_seconds", "model" => reply.ctx.model.clone())
+                .record(reply.sent_at.elapsed().as_secs_f64());
+            self.observe(reply.ctx.model.clone(), true, None, None);
+            record_observations(&reply.ctx, &observe_buffered(&body));
+            record_request(&reply.ctx, reply.status.as_str());
+            Response::builder()
+                .status(reply.status)
+                .header(header::CONTENT_TYPE, reply.content_type)
+                .body(Body::from(body))
+                .unwrap()
+        };
+        if let Some(deadline) = deadline {
+            match tokio::time::timeout_at(deadline.0.into(), work).await {
+                Ok(response) => response,
+                Err(_) => {
+                    record_deadline(&self.ctx);
+                    deadline_exceeded()
+                }
+            }
+        } else {
+            work.await
+        }
+    }
+
+    fn streaming(
+        self,
+        strategy: crate::racing::RaceStrategy,
+        inflight_guard: impl Send + 'static,
+        deadline: Option<RequestDeadline>,
+    ) -> Response {
+        let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
+        tokio::spawn(async move {
+            let _inflight = inflight_guard;
+            gauge!("nimproxy_active_requests").increment(1.0);
+            let _active =
+                crate::dispatch::scopeguard(|| gauge!("nimproxy_active_requests").decrement(1.0));
+            let observer = Arc::new(Mutex::new(None));
+            let selected_ctx = Mutex::new(self.ctx.clone());
+            let work = async {
+                if tx
+                    .send(Ok(Bytes::from_static(b": connected\n\n")))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let selection = self.select(strategy);
+                tokio::pin!(selection);
+                let mut heartbeat = tokio::time::interval(self.cfg.heartbeat);
+                let winner = loop {
+                    tokio::select! {
+                        result = &mut selection => break result,
+                        _ = heartbeat.tick() => { let _ = tx.try_send(Ok(Bytes::from_static(b": heartbeat\n\n"))); }
+                    }
+                };
+                let Ok(reply) = winner else {
+                    let _ = tx
+                        .send(Ok(sse_error_with_code(
+                            "race_failed",
+                            "all racing attempts failed",
+                        )))
+                        .await;
+                    record_request(&self.ctx, "502");
+                    return;
+                };
+                *selected_ctx.lock().unwrap() = reply.ctx.clone();
+                let RaceBody::Stream {
+                    prefix,
+                    mut chunks,
+                    first,
+                    mut gate,
+                } = reply.body
+                else {
+                    unreachable!("streaming race")
+                };
+                let ttft = first.duration_since(reply.sent_at);
+                counter!("nimproxy_race_model_wins_total", "model" => reply.ctx.model.clone())
+                    .increment(1);
+                histogram!("nimproxy_race_ttft_seconds", "model" => reply.ctx.model.clone())
+                    .record(ttft.as_secs_f64());
+                histogram!("nimproxy_ttft_seconds", "model" => reply.ctx.model.clone())
+                    .record(ttft.as_secs_f64());
+                *observer.lock().unwrap() = Some(SseObserver::default());
+                let mut chunk = Some(Ok(prefix));
+                let outcome = loop {
+                    match chunk {
+                        Some(Ok(bytes)) => {
+                            observer
+                                .lock()
+                                .unwrap()
+                                .as_mut()
+                                .expect("winner observer")
+                                .push(&bytes);
+                            if tx.send(Ok(bytes)).await.is_err() {
+                                break StreamOutcome::Disconnected;
+                            }
+                        }
+                        Some(Err(_)) => {
+                            let _ = tx.send(Ok(sse_error("upstream stream interrupted"))).await;
+                            break StreamOutcome::Truncated;
+                        }
+                        None => {
+                            break if gate.is_complete() {
+                                StreamOutcome::Completed
+                            } else {
+                                StreamOutcome::Truncated
+                            }
+                        }
+                    }
+                    chunk = match read_race_chunk(&mut chunks, self.cfg.stream_idle).await {
+                        Ok(chunk) => chunk,
+                        Err(()) => {
+                            let _ = tx.send(Ok(sse_error("upstream stream stalled"))).await;
+                            break StreamOutcome::Truncated;
+                        }
+                    };
+                    // The prefix was classified during selection. Observe
+                    // only new bytes here so post-selection errors or a
+                    // truncated final event cannot become successful samples.
+                    if let Some(Ok(bytes)) = &chunk {
+                        gate.push(bytes);
+                    }
+                };
+                let success = matches!(outcome, StreamOutcome::Completed);
+                let completion = finalize_sse_observer(&reply.ctx, &observer, outcome);
+                let gen_secs = first.elapsed().as_secs_f64();
+                let tps = completion.filter(|(c, _)| *c > 0 && gen_secs > 0.1).map(|(c, source)| {
+                    let tps = c as f64 / gen_secs;
+                    histogram!("nimproxy_tokens_per_second", "model" => reply.ctx.model.clone(), "source" => source).record(tps);
+                    histogram!("nimproxy_tpot_seconds", "model" => reply.ctx.model.clone()).record(gen_secs / c as f64);
+                    tps
+                });
+                self.observe(reply.ctx.model.clone(), success, Some(ttft), tps);
+                histogram!("nimproxy_upstream_seconds", "model" => reply.ctx.model.clone())
+                    .record(reply.sent_at.elapsed().as_secs_f64());
+                record_request(&reply.ctx, if success { "200" } else { "stream_error" });
+                // Keep the winner's model permit through its complete relay.
+                drop(reply._permit);
+            };
+            let expire = async {
+                if let Some(deadline) = deadline {
+                    tokio::time::sleep_until(deadline.0.into()).await
+                } else {
+                    std::future::pending::<()>().await
+                }
+            };
+            tokio::select! {
+                _ = tx.closed() => {
+                    let ctx = selected_ctx.lock().unwrap();
+                    finalize_sse_observer(&ctx, &observer, StreamOutcome::Disconnected);
+                    record_request(&ctx, "disconnect");
+                }
+                _ = expire => {
+                    let ctx = selected_ctx.lock().unwrap();
+                    finalize_sse_observer(&ctx, &observer, StreamOutcome::Deadline);
+                    record_deadline(&ctx);
+                    let _ = tx.try_send(Ok(sse_error_with_code("deadline_exceeded", "proxy request deadline exceeded")));
+                }
+                _ = work => {}
+            }
+        });
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(Body::from_stream(ReceiverStream::new(rx)))
+            .unwrap()
+    }
+}
+
+async fn read_race_chunk(
+    chunks: &mut UpstreamChunks,
+    idle: Duration,
+) -> Result<Option<Result<Bytes, reqwest::Error>>, ()> {
+    if idle.is_zero() {
+        Ok(chunks.next().await)
+    } else {
+        tokio::time::timeout(idle, chunks.next())
+            .await
+            .map_err(|_| ())
     }
 }
 

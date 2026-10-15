@@ -8,6 +8,11 @@ timestamp: 2026-07-16T00:00:00Z
 
 # Streaming pipeline — `src/proxy.rs`
 
+The optional [model-racing policy](model-racing.md) applies only to chat POSTs.
+It selects a meaningful streamed delta before releasing the winning prefix,
+while retaining the same admission, retry, idle and absolute-deadline rules.
+The lifecycle below describes the default path when racing is disabled.
+
 For a `stream: true` chat request:
 
 1. **Auth + parse** once: client name, model label, stream flag, affinity

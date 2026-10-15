@@ -6,6 +6,7 @@ description: Lightweight ADRs — context, options, choice, consequences.
 
 # Decisions
 
+- [same-model-request-racing](same-model-request-racing.md)
 - [sliding-window-not-token-bucket](sliding-window-not-token-bucket.md)
 - [window-jitter-margin](window-jitter-margin.md)
 - [global-fifo-dispatcher](global-fifo-dispatcher.md)

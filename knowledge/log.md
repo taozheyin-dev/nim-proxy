@@ -6,6 +6,55 @@ description: Append-only record of ingests, decisions, and maintenance passes.
 
 # Log
 
+## [2026-10-15] runbook — separate new-api ordinary and racing channels
+
+The [new-api runbook](ops/new-api-integration.md) records the verified two-group
+deployment and private active-key ownership comparison. It incorporates
+independent-review corrections for test-config publication, absolute client
+deadlines, finite-response EOF, and real group routing. The
+[key-pool](architecture/key-pool.md) and [Docker](ops/deploy-docker.md) pages
+now explain that a restart requires a drained 61-second window handoff;
+retrying 429s is not prevention. The [plan](../docs/plans/model-racing-implementation.md)
+owns local key counts, route evidence and the new fork publication state.
+
+## [2026-10-14] decision — deliver governed same-model request racing
+
+The [same-model decision](decisions/same-model-request-racing.md) now has an
+implementation that preserves the client-selected model and request bytes,
+keeps pending originals eligible after delayed launches, and chooses effective
+buffered or streaming output. Every send shares governor and RPM admission;
+sent losers retain their rate cost. Legacy multi-model policies are explicitly
+rejected. The [component](architecture/model-racing.md) and
+[operator guide](../docs/features/model-racing.md) describe the behavior and
+compatibility boundary. Independent source review found no blocking defect;
+the [delivery plan](../docs/plans/model-racing-implementation.md) records fresh
+verification and deployment state. No live performance gain is inferred.
+
+## [2026-10-12] component — distinguish same-model requirement from multi-model implementation
+
+The owner clarified that racing means concurrent request attempts for the same
+model. Source review confirmed the current implementation substitutes configured
+models, rejects duplicate IDs and cancels its primary before smart fallbacks.
+The [component page](architecture/model-racing.md) distinguishes executable
+behavior from the corrected requirement; the
+[active plan](../docs/plans/model-racing-implementation.md) records the scope
+delta, reusable mechanisms and pending acceptance work. No behavioral change or
+production latency claim accompanies this documentation correction.
+
+## [2026-10-10] component — complete opt-in model racing repair
+
+The configured chat-racing path now uses owned contender futures and the
+existing governor/RPM admission. Explicit admin configuration persists through
+the normal transaction; streaming selection requires meaningful SSE data and
+retains cancellation/deadline ownership. Independent review exposed CR/event
+framing, prefix-boundary and erroneous-success observations; committed red
+regressions now pass. Final local proof passed 378 tests with one existing
+release-only test ignored, plus Clippy, formatting and documentation guards.
+The [model-racing component](architecture/model-racing.md),
+[operator guide](../docs/features/model-racing.md), and
+[repair plan](../docs/plans/model-racing-implementation.md) own behavior,
+limitations and delivery evidence. No live NIM speedup is inferred.
+
 ## [2026-10-07] maintenance — verify the local Chinese catalog at the guard entry point
 
 The local handoff audit reproduced that `locale_v1.py --all` inspected English

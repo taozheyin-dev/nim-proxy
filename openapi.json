@@ -170,6 +170,258 @@
         "security": []
       }
     },
+    "/api/racing/config": {
+      "get": {
+        "tags": [
+          "racing"
+        ],
+        "summary": "Get the current racing policy (admin).",
+        "operationId": "get_racing_config",
+        "responses": {
+          "200": {
+            "description": "Current persisted policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RacingConfigResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Operator authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Racing requires an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Initial setup is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "racing"
+        ],
+        "summary": "Persist and apply a bounded racing policy (admin).",
+        "operationId": "update_racing_config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRacingConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Validated, persisted, and applied atomically",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON or invalid_config: invalid racing policy, strict passthrough conflict, or failed save",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Operator authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Racing requires an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request body exceeds the configured limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type must be application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Initial setup is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/racing/ranked": {
+      "get": {
+        "tags": [
+          "racing"
+        ],
+        "summary": "Get models ranked by measured performance since process startup (admin).",
+        "operationId": "get_ranked_models",
+        "responses": {
+          "200": {
+            "description": "Ranked models with actual latency observations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PerformanceStatsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Operator authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Racing requires an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Initial setup is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/racing/stats": {
+      "get": {
+        "tags": [
+          "racing"
+        ],
+        "summary": "Get model performance observations since process startup (admin).",
+        "operationId": "get_performance_stats",
+        "responses": {
+          "200": {
+            "description": "Model observations in model-id order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PerformanceStatsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Operator authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Racing requires an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Initial setup is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/settings/account": {
       "post": {
         "tags": [
@@ -1865,6 +2117,45 @@
           "keyed"
         ]
       },
+      "ModelStatsEntry": {
+        "type": "object",
+        "description": "Existing scalar response fields; only actual measurements contribute to\naverages. A zero with no samples must not be treated as a fast observation.",
+        "required": [
+          "avg_tokens_per_sec",
+          "avg_ttft_ms",
+          "name",
+          "success_rate",
+          "successful_requests",
+          "total_requests"
+        ],
+        "properties": {
+          "avg_tokens_per_sec": {
+            "type": "number",
+            "format": "double"
+          },
+          "avg_ttft_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "name": {
+            "type": "string"
+          },
+          "success_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "successful_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "NimKeyRow": {
         "type": "object",
         "description": "A stored NIM key plus its live lane state. `lane`, `in_window` and\n`cooldown_ms` are null for a disabled key (it holds no lane).",
@@ -1968,6 +2259,21 @@
           }
         }
       },
+      "PerformanceStatsResponse": {
+        "type": "object",
+        "description": "Bounded in-memory model observations, cleared on process restart.",
+        "required": [
+          "models"
+        ],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelStatsEntry"
+            }
+          }
+        }
+      },
       "PoolSummary": {
         "type": "object",
         "description": "Pool aggregate — visible to every role, since it carries no ownership.",
@@ -1983,6 +2289,156 @@
           "enabled": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "RaceStrategy": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Race identical request copies; zero delay launches all copies immediately.",
+            "required": [
+              "attempts",
+              "hedge_delay_ms",
+              "type"
+            ],
+            "properties": {
+              "attempts": {
+                "type": "integer",
+                "maximum": 5,
+                "minimum": 1
+              },
+              "hedge_delay_ms": {
+                "type": "integer",
+                "format": "int64",
+                "maximum": 300000,
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "same_model"
+                ]
+              }
+            },
+            "maxProperties": 3
+          },
+          {
+            "type": "object",
+            "description": "Retired multi-model policy. Replace with `same_model` before enabling.",
+            "required": [
+              "models",
+              "type"
+            ],
+            "properties": {
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "full_parallel"
+                ]
+              }
+            },
+            "maxProperties": 2
+          },
+          {
+            "type": "object",
+            "description": "Retired multi-model policy. Replace with `same_model` before enabling.",
+            "required": [
+              "primary_model",
+              "fallback_models",
+              "primary_timeout_ms",
+              "type"
+            ],
+            "properties": {
+              "fallback_models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "primary_model": {
+                "type": "string"
+              },
+              "primary_timeout_ms": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "smart"
+                ]
+              }
+            },
+            "maxProperties": 4
+          },
+          {
+            "type": "object",
+            "description": "Retired multi-model policy. Replace with `same_model` before enabling.",
+            "required": [
+              "models",
+              "type"
+            ],
+            "properties": {
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ttft_racing"
+                ]
+              }
+            },
+            "maxProperties": 2
+          },
+          {
+            "type": "object",
+            "description": "No racing. An enabled durable policy may not use this variant.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "none"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Every participant consumes a separately governed upstream request. Policies\nrace at most five copies of the client-selected model and are disabled\nunless persisted. Retired multi-model policies parse only for migration errors."
+      },
+      "RacingConfigResponse": {
+        "type": "object",
+        "description": "The opt-in server-wide policy for chat-completion racing.",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RaceStrategy"
+              }
+            ]
           }
         }
       },
@@ -2262,6 +2718,27 @@
           }
         }
       },
+      "UpdateRacingConfigRequest": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "strategy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RaceStrategy"
+              }
+            ]
+          }
+        }
+      },
       "UpstreamReq": {
         "type": "object",
         "required": [
@@ -2408,6 +2885,10 @@
     {
       "name": "dashboard",
       "description": "Read-only telemetry the operator console renders."
+    },
+    {
+      "name": "racing",
+      "description": "Admin-only opt-in racing policy and in-memory model performance."
     },
     {
       "name": "settings",
